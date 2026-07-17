@@ -13,6 +13,9 @@
 1. Скопируйте `.env.example` в `.env` и задайте надёжные значения для
    `DB_PASSWORD` и `SECRET_KEY`.
 2. Запустите `docker compose up --build`.
+
+Для постоянного запуска в Debian VM на Proxmox используйте отдельную
+инструкцию [DEPLOYMENT.md](DEPLOYMENT.md) и файл `compose.production.yml`.
 3. Откройте `http://localhost:8000`, зарегистрируйте первого пользователя и
    добавьте устройства через «Настройки» — вручную или поиском по своей подсети.
 
