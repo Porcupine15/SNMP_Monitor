@@ -5,7 +5,8 @@ from app import auth
 
 def test_access_token_has_bound_security_claims(monkeypatch):
     monkeypatch.setattr(auth, "SECRET_KEY", "s" * 48)
-    token = auth.create_access_token({"sub": "admin"})
+    password_version = "a" * 64
+    token = auth.create_access_token({"sub": "admin", "pwd": password_version})
 
     payload = jwt.decode(
         token,
@@ -16,6 +17,7 @@ def test_access_token_has_bound_security_claims(monkeypatch):
     )
 
     assert payload["sub"] == "admin"
+    assert payload["pwd"] == password_version
     assert payload["iat"] < payload["exp"]
     assert payload["jti"]
 

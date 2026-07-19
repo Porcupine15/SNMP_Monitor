@@ -2,6 +2,7 @@ import os
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from typing import Optional
 import jwt
 from passlib.context import CryptContext
@@ -44,6 +45,12 @@ def verify_password(plain_password, hashed_password):
 def get_password_hash(password):
     return pwd_context.hash(password)
 
+
+def password_token_version(hashed_password: str) -> str:
+    """Bind access tokens to the current password hash without exposing it."""
+    return sha256(hashed_password.encode("utf-8")).hexdigest()
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
     issued_at = datetime.now(timezone.utc)
@@ -75,12 +82,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
             issuer=TOKEN_ISSUER,
         )
         username: str = payload.get("sub")
-        if username is None:
+        password_version: str = payload.get("pwd")
+        if username is None or password_version is None:
             raise credentials_exception
     except jwt.InvalidTokenError:
         raise credentials_exception
     user = db.query(User).filter(User.username == username).first()
-    if user is None or not user.is_active:
+    if (
+        user is None
+        or not user.is_active
+        or not secrets.compare_digest(
+            password_version,
+            password_token_version(user.hashed_password),
+        )
+    ):
         raise credentials_exception
     return user
 

@@ -7,7 +7,7 @@ from app import crud
 from app.database import get_db
 from app.models import User
 from app.schemas import UserCreate, UserLogin, Token, UserOut
-from app.auth import clear_login_attempts, create_access_token, get_current_user, get_password_hash, login_allowed, pwd_context, record_failed_login, verify_password
+from app.auth import clear_login_attempts, create_access_token, get_current_user, get_password_hash, login_allowed, password_token_version, pwd_context, record_failed_login, verify_password
 from app.config import public_registration_enabled
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -60,7 +60,15 @@ def login(request: Request, user: UserLogin, db: Session = Depends(get_db)):
         db_user.hashed_password = get_password_hash(user.password)
         db.commit()
     crud.add_audit_event(db, db_user.username, "login_succeeded", source_ip)
-    return {"access_token": create_access_token(data={"sub": db_user.username}), "token_type": "bearer"}
+    return {
+        "access_token": create_access_token(
+            data={
+                "sub": db_user.username,
+                "pwd": password_token_version(db_user.hashed_password),
+            }
+        ),
+        "token_type": "bearer",
+    }
 
 
 @router.get("/me", response_model=UserOut)

@@ -25,8 +25,10 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=12, max_length=128)
     email: Optional[str] = Field(None, max_length=255)
 
-    @field_validator("username")
+    @field_validator("username", mode="before")
     def valid_username(cls, value: str) -> str:
+        if not isinstance(value, str):
+            return value
         value = value.strip()
         if not value or not all(char.isalnum() or char in "_.-" for char in value):
             raise ValueError("Имя может содержать буквы, цифры, точку, дефис и подчёркивание")
@@ -59,6 +61,43 @@ class UserRoleUpdate(BaseModel):
 
 class UserAdminCreate(UserCreate):
     role: Role = "viewer"
+
+
+class UserAdminUpdate(BaseModel):
+    username: Optional[str] = Field(None, min_length=3, max_length=50)
+    email: Optional[str] = Field(None, max_length=255)
+    password: Optional[str] = Field(None, min_length=12, max_length=128)
+    role: Optional[Role] = None
+    is_active: Optional[bool] = None
+
+    @field_validator("username", mode="before")
+    def valid_optional_username(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value or not all(char.isalnum() or char in "_.-" for char in value):
+            raise ValueError("Имя может содержать буквы, цифры, точку, дефис и подчёркивание")
+        return value
+
+    @field_validator("email")
+    def valid_optional_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None
+        value = value.strip().lower()
+        if value.count("@") != 1 or value.startswith("@") or value.endswith("@"):
+            raise ValueError("Укажите корректный email")
+        return value
+
+    @model_validator(mode="after")
+    def at_least_one_change(self):
+        if not self.model_fields_set:
+            raise ValueError("Укажите хотя бы одно изменяемое поле")
+        for field in ("username", "password", "role", "is_active"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"Поле {field} не может быть пустым")
+        return self
 
 
 class UserStatusUpdate(BaseModel):

@@ -6,6 +6,7 @@
         let isLoginMode = true;
         let cachedDevices = new Map();
         let clientItems = [];
+        let managedUsers = [];
         let pingDefaults = { count: 3, timeout: 2 };
 
         const PAGE_META = {
@@ -230,6 +231,7 @@
                 case 'load-page': loadPage(trigger.dataset.pageTarget); break;
                 case 'download-export': downloadExport(trigger.dataset.resource); break;
                 case 'set-user-status': setUserStatus(Number(trigger.dataset.userId), trigger.dataset.active === 'true'); break;
+                case 'edit-user': openUserEditor(Number(trigger.dataset.userId)); break;
                 case 'view-device': viewDevice(Number(trigger.dataset.deviceId)); break;
                 case 'edit-device': editDevice(Number(trigger.dataset.deviceId)); break;
                 case 'delete-device': deleteDevice(Number(trigger.dataset.deviceId)); break;
@@ -521,7 +523,7 @@
                     </div></div>
                     <div class="card mt-3"><div class="card-header">Экспорт CSV</div><div class="card-body d-flex flex-wrap gap-2"><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="devices">Устройства</button><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="events">События</button><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="clients">Клиенты</button><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="availability">Доступность</button></div></div>
                 </div>
-                <div class="col-lg-7">${isAdmin ? `<div class="card"><div class="card-header">Аудит действий</div><div class="card-body"><div id="auditList" class="small text-muted">Загрузка…</div></div></div><div class="card mt-3"><div class="card-header">Пользователи и роли</div><div class="card-body"><form id="createUserForm" class="row g-2 mb-3"><div class="col-md-4"><input id="newUsername" class="form-control form-control-sm" placeholder="Логин" minlength="3" required></div><div class="col-md-4"><input id="newUserPassword" type="password" class="form-control form-control-sm" placeholder="Пароль (12+)" minlength="12" required></div><div class="col-md-3"><select id="newUserRole" class="form-select form-select-sm"><option value="viewer">viewer</option><option value="operator">operator</option><option value="admin">admin</option></select></div><div class="col-md-1"><button class="btn btn-primary btn-sm" title="Создать"><i class="fas fa-plus"></i></button></div></form><div id="usersList" class="small text-muted">Загрузка…</div></div></div>` : `<div class="card"><div class="card-header">Права доступа</div><div class="card-body"><p>Ваша роль: <strong>${escapeHtml(currentUser?.role || 'viewer')}</strong>.</p><p class="text-muted mb-0">Аудит, изменение параметров и ролей доступны администратору. Запрещённые API-запросы не отправляются.</p></div></div>`}</div>
+                <div class="col-lg-7">${isAdmin ? `<div class="card"><div class="card-header">Аудит действий</div><div class="card-body"><div id="auditList" class="small text-muted">Загрузка…</div></div></div><div class="card mt-3"><div class="card-header">Пользователи и роли</div><div class="card-body"><form id="createUserForm" class="row g-2 mb-3"><div class="col-md-3"><input id="newUsername" class="form-control form-control-sm" placeholder="Логин" minlength="3" required></div><div class="col-md-3"><input id="newUserEmail" type="email" class="form-control form-control-sm" placeholder="Email"></div><div class="col-md-3"><input id="newUserPassword" type="password" class="form-control form-control-sm" placeholder="Пароль (12+)" minlength="12" required></div><div class="col-md-2"><select id="newUserRole" class="form-select form-select-sm"><option value="viewer">viewer</option><option value="operator">operator</option><option value="admin">admin</option></select></div><div class="col-md-1"><button class="btn btn-primary btn-sm" title="Создать"><i class="fas fa-plus"></i></button></div></form><div id="usersList" class="small text-muted">Загрузка…</div></div></div>` : `<div class="card"><div class="card-header">Права доступа</div><div class="card-body"><p>Ваша роль: <strong>${escapeHtml(currentUser?.role || 'viewer')}</strong>.</p><p class="text-muted mb-0">Аудит, изменение параметров и ролей доступны администратору. Запрещённые API-запросы не отправляются.</p></div></div>`}</div>
             </div>`;
             loadOperations();
             if (isAdmin) document.getElementById('opsSettingsForm').addEventListener('submit', saveOperations);
@@ -544,7 +546,8 @@
                 document.getElementById('auditList').innerHTML = audit.length ? audit.map(item => `<div class="event-row"><div><strong>${escapeHtml(item.action)}</strong> · ${escapeHtml(item.username)}<br><span class="text-muted">${escapeHtml(item.details || '—')}</span></div><span class="event-time">${formatDateTime(item.time)}</span></div>`).join('') : 'Записей пока нет';
                 if (!usersRes.ok) throw new Error(await apiError(usersRes, 'Не удалось загрузить пользователей'));
                 const users = await usersRes.json();
-                document.getElementById('usersList').innerHTML = users.map(user => `<div class="d-flex gap-2 align-items-center border-bottom py-2"><span class="flex-grow-1"><strong>${escapeHtml(user.username)}</strong>${user.id === currentUser.id ? ' <span class="text-muted">(вы)</span>' : ''}<br><span class="text-muted">${user.is_active ? 'активен' : 'заблокирован'}</span></span><select class="form-select form-select-sm" style="max-width:125px" data-action="set-user-role" data-user-id="${Number(user.id)}" ${user.id === currentUser.id ? 'disabled' : ''}><option value="admin" ${user.role==='admin'?'selected':''}>admin</option><option value="operator" ${user.role==='operator'?'selected':''}>operator</option><option value="viewer" ${user.role==='viewer'?'selected':''}>viewer</option></select>${user.id === currentUser.id ? '' : `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="set-user-status" data-user-id="${Number(user.id)}" data-active="${!user.is_active}">${user.is_active ? 'Блокировать' : 'Включить'}</button>`}</div>`).join('') || 'Пользователей нет';
+                managedUsers = users;
+                document.getElementById('usersList').innerHTML = users.map(user => `<div class="d-flex flex-wrap gap-2 align-items-center border-bottom py-2"><span class="flex-grow-1"><strong>${escapeHtml(user.username)}</strong>${user.id === currentUser.id ? ' <span class="text-muted">(вы)</span>' : ''}<br><span class="text-muted">${escapeHtml(user.email || 'email не задан')} · ${user.is_active ? 'активен' : 'заблокирован'}</span></span><select class="form-select form-select-sm" style="max-width:125px" data-action="set-user-role" data-user-id="${Number(user.id)}" ${user.id === currentUser.id ? 'disabled' : ''}><option value="admin" ${user.role==='admin'?'selected':''}>admin</option><option value="operator" ${user.role==='operator'?'selected':''}>operator</option><option value="viewer" ${user.role==='viewer'?'selected':''}>viewer</option></select>${user.id === currentUser.id ? '' : `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="set-user-status" data-user-id="${Number(user.id)}" data-active="${!user.is_active}">${user.is_active ? 'Блокировать' : 'Включить'}</button><button class="btn btn-outline-secondary btn-sm" type="button" data-action="edit-user" data-user-id="${Number(user.id)}" title="Редактировать"><i class="fas fa-pen"></i></button>`}</div>`).join('') || 'Пользователей нет';
             } catch (error) {
                 const target = document.getElementById('auditList') || document.getElementById('opsResult');
                 if (target) { target.className = 'text-danger'; target.textContent = `Ошибка: ${error.message}`; }
@@ -578,20 +581,113 @@
                 return;
             }
             showToast('Роль пользователя обновлена');
+            await loadOperations();
         }
 
         async function createUser(event) {
             event.preventDefault();
-            const payload = { username: document.getElementById('newUsername').value.trim(), password: document.getElementById('newUserPassword').value, role: document.getElementById('newUserRole').value };
+            const email = document.getElementById('newUserEmail').value.trim();
+            const payload = {
+                username: document.getElementById('newUsername').value.trim(),
+                email: email || null,
+                password: document.getElementById('newUserPassword').value,
+                role: document.getElementById('newUserRole').value
+            };
             const response = await apiFetch('/admin/users', { method: 'POST', body: JSON.stringify(payload) });
             if (!response.ok) return showToast(await apiError(response, 'Пользователь не создан'), 'danger');
-            event.target.reset(); showToast('Пользователь создан'); loadOperations();
+            event.target.reset();
+            showToast('Пользователь создан');
+            await loadOperations();
+        }
+
+        function openUserEditor(userId) {
+            if (!hasRole('admin')) return;
+            const user = managedUsers.find(item => Number(item.id) === Number(userId));
+            if (!user) {
+                showToast('Пользователь не найден. Обновите список.', 'danger');
+                return;
+            }
+            if (Number(user.id) === Number(currentUser?.id)) {
+                showToast('Свою учётную запись нельзя менять через панель администрирования.', 'danger');
+                return;
+            }
+
+            document.getElementById('editUserId').value = user.id;
+            document.getElementById('editUsername').value = user.username;
+            document.getElementById('editUserEmail').value = user.email || '';
+            document.getElementById('editUserPassword').value = '';
+            document.getElementById('editUserRole').value = user.role;
+            document.getElementById('editUserActive').value = String(Boolean(user.is_active));
+            document.getElementById('userEditModalTitle').textContent = `Редактирование: ${user.username}`;
+            const result = document.getElementById('userEditResult');
+            result.className = 'mt-3';
+            result.textContent = '';
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('userEditModal')).show();
+        }
+
+        async function saveUserChanges(event) {
+            event.preventDefault();
+            if (!hasRole('admin')) return;
+
+            const userId = Number(document.getElementById('editUserId').value);
+            const result = document.getElementById('userEditResult');
+            const button = document.getElementById('userEditSave');
+            if (!userId || userId === Number(currentUser?.id)) {
+                result.className = 'text-danger mt-3';
+                result.textContent = 'Эту учётную запись нельзя изменить из панели администрирования.';
+                return;
+            }
+
+            const original = managedUsers.find(item => Number(item.id) === userId);
+            if (!original) {
+                result.className = 'text-danger mt-3';
+                result.textContent = 'Пользователь не найден. Закройте окно и обновите список.';
+                return;
+            }
+
+            const username = document.getElementById('editUsername').value.trim();
+            const email = document.getElementById('editUserEmail').value.trim() || null;
+            const password = document.getElementById('editUserPassword').value;
+            const role = document.getElementById('editUserRole').value;
+            const isActive = document.getElementById('editUserActive').value === 'true';
+            const payload = {};
+            if (username !== original.username) payload.username = username;
+            if (email !== (original.email || null)) payload.email = email;
+            if (role !== original.role) payload.role = role;
+            if (isActive !== Boolean(original.is_active)) payload.is_active = isActive;
+            if (password) payload.password = password;
+
+            if (!Object.keys(payload).length) {
+                result.className = 'text-muted mt-3';
+                result.textContent = 'Изменений нет.';
+                return;
+            }
+
+            button.disabled = true;
+            result.className = 'text-muted mt-3';
+            result.textContent = 'Сохранение…';
+            try {
+                const response = await apiFetch(`/admin/users/${userId}`, {
+                    method: 'PATCH',
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) throw new Error(await apiError(response, 'Пользователь не обновлён'));
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('userEditModal')).hide();
+                showToast('Учётная запись обновлена');
+                await loadOperations();
+            } catch (error) {
+                result.className = 'text-danger mt-3';
+                result.textContent = error.message;
+            } finally {
+                button.disabled = false;
+            }
         }
 
         async function setUserStatus(userId, isActive) {
             const response = await apiFetch(`/admin/users/${userId}/status`, { method: 'PUT', body: JSON.stringify({ is_active: isActive }) });
             if (!response.ok) return showToast(await apiError(response, 'Статус не изменён'), 'danger');
-            showToast('Статус пользователя обновлён'); loadOperations();
+            showToast('Статус пользователя обновлён');
+            await loadOperations();
         }
 
         async function downloadExport(resource) {
@@ -1103,6 +1199,7 @@
         // ---------- Запуск приложения ----------
         document.addEventListener('DOMContentLoaded', function() {
             configureRegistration();
+            document.getElementById('userEditForm')?.addEventListener('submit', saveUserChanges);
             const token = localStorage.getItem('access_token');
             if (token) {
                 fetch(`${API_BASE}/auth/me`, {

@@ -133,6 +133,56 @@
         </div>
     </div>
 
+    <div class="modal fade" id="userEditModal" tabindex="-1" aria-labelledby="userEditModalTitle" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="userEditModalTitle">Редактирование пользователя</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <form id="userEditForm">
+                    <div class="modal-body">
+                        <input type="hidden" id="editUserId">
+                        <div class="mb-3">
+                            <label for="editUsername" class="form-label">Логин</label>
+                            <input id="editUsername" class="form-control" minlength="3" maxlength="50" autocomplete="off" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="editUserEmail" class="form-label">Email</label>
+                            <input id="editUserEmail" class="form-control" type="email" maxlength="255" autocomplete="off">
+                        </div>
+                        <div class="mb-3">
+                            <label for="editUserPassword" class="form-label">Новый пароль</label>
+                            <input id="editUserPassword" class="form-control" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="Оставьте пустым, чтобы не менять">
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label for="editUserRole" class="form-label">Роль</label>
+                                <select id="editUserRole" class="form-select">
+                                    <option value="viewer">viewer</option>
+                                    <option value="operator">operator</option>
+                                    <option value="admin">admin</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label for="editUserActive" class="form-label">Состояние</label>
+                                <select id="editUserActive" class="form-select">
+                                    <option value="true">Активен</option>
+                                    <option value="false">Заблокирован</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="userEditResult" class="mt-3" role="alert" aria-live="polite"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+                        <button type="submit" class="btn btn-primary" id="userEditSave">Сохранить</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
     <script src="/static/vendor/jquery/jquery.min.js"></script>
     <script src="/static/vendor/bootstrap/bootstrap.bundle.min.js"></script>
