@@ -12,7 +12,7 @@ from app.database import Base
 from app.models import AuditEvent, Device, NetworkClient, User
 from app.routes.clients import _client_for_observation
 from app.routes.devices import update_port
-from app.schemas import AgentClient, DeviceCreate, PortUpdate
+from app.schemas import AgentClient, DeviceCreate, PortUpdate, UserCreate
 
 
 def _session():
@@ -57,6 +57,19 @@ def test_network_client_input_normalizes_identity_fields():
         AgentClient(ip="not-an-ip", mac="invalid")
     with pytest.raises(ValidationError):
         DeviceCreate(ip="192.168.1.1", device_type="camera")
+    with pytest.raises(ValidationError):
+        DeviceCreate(ip="192.168.1.2", device_type="switch", snmp_version="v3")
+    with pytest.raises(ValidationError):
+        UserCreate(username="operator", password="too-short")
+
+    device = DeviceCreate(
+        ip="192.168.1.2",
+        device_type="switch",
+        snmp_version="v3",
+        snmp_user="monitor",
+        snmp_auth="a-secure-auth-secret",
+    )
+    assert device.snmp_user == "monitor"
 
 
 def test_client_identity_follows_mac_when_dhcp_address_changes():

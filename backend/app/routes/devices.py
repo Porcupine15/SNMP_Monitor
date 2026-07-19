@@ -10,6 +10,7 @@ from app.auth import get_current_user, require_roles
 from app.models import User
 from app.schemas import DeviceUpdate, PortUpdate
 from app.credentials import device_credentials, protect_device_credentials
+from app.config import ip_is_allowed
 
 router = APIRouter(prefix="/api/devices", tags=["devices"])
 
@@ -62,6 +63,8 @@ def update_device(
         raise HTTPException(status_code=404, detail="Device not found")
     changes = protect_device_credentials(data.model_dump(exclude_unset=True))
     new_ip = changes.get("ip")
+    if new_ip and not ip_is_allowed(new_ip):
+        raise HTTPException(status_code=403, detail="Device is outside ALLOWED_NETWORKS")
     if new_ip and db.query(models.Device).filter(
         models.Device.ip == new_ip,
         models.Device.id != device_id,
@@ -109,16 +112,9 @@ async def get_ports(
     device = crud.get_device(db, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    if device.ports:
-        return device.ports
-    credentials = device_credentials(device)
-    from app.snmp_client import get_switch_port_snapshot
-    ports = get_switch_port_snapshot(
-        device.ip, credentials["community"], device.snmp_version,
-        credentials["snmp_user"], credentials["snmp_auth"], credentials["snmp_priv"],
-    )
-    crud.update_device_ports(db, device_id, ports)
-    return ports
+    if not ip_is_allowed(device.ip):
+        raise HTTPException(status_code=403, detail="Device is outside ALLOWED_NETWORKS")
+    return device.ports or []
 
 
 @router.post("/{device_id}/ports/refresh")
@@ -130,6 +126,8 @@ async def refresh_ports(
     device = crud.get_device(db, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    if not ip_is_allowed(device.ip):
+        raise HTTPException(status_code=403, detail="Device is outside ALLOWED_NETWORKS")
     if device.device_type != "switch":
         raise HTTPException(status_code=400, detail="Port polling is available only for switches")
 

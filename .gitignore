@@ -5,3 +5,4 @@ __pycache__/
 .DS_Store
 postgres_data/
 backups/
+graphify-out/

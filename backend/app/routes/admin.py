@@ -6,6 +6,7 @@ from app.database import get_db
 from app import crud, models
 from app.schemas import DeviceCreate, DeviceOut, UserAdminCreate, UserRoleUpdate, UserStatusUpdate, UserOut
 from app.auth import get_password_hash, require_roles
+from app.config import ip_is_allowed
 from app.models import User
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -85,10 +86,13 @@ def add_device(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_roles("admin", "operator"))
 ):
+    if not ip_is_allowed(device.ip):
+        raise HTTPException(status_code=403, detail="Device is outside ALLOWED_NETWORKS")
     existing = db.query(models.Device).filter(models.Device.ip == device.ip).first()
     if existing:
         raise HTTPException(status_code=400, detail="Device with this IP already exists")
     new_device = crud.create_device(db, device.model_dump())
+    crud.add_audit_event(db, current_user.username, "device_created", f"{new_device.id}: {new_device.ip}")
     return {"status": "created", "id": new_device.id}
 
 @router.get("/devices", response_model=list[DeviceOut])

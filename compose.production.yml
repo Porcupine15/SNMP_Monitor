@@ -1,12 +1,12 @@
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:15-alpine@sha256:cd17e2ac98240fce1541ad2a803b34009b4eea5aec8a832363cdc7eca62e722e
     container_name: snmp_db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER:?Set DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:?Set DB_NAME}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -15,6 +15,13 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
   backend:
     build:
@@ -23,24 +30,35 @@ services:
     container_name: snmp_backend
     restart: unless-stopped
     init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    pids_limit: 256
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${APP_PORT:-8000}:8000"
     depends_on:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      SECRET_KEY: ${SECRET_KEY}
-      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-1440}
-      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY}
-      LAN_AGENT_TOKEN: ${LAN_AGENT_TOKEN}
+      DATABASE_URL: postgresql://${DB_USER:?Set DB_USER}:${DB_PASSWORD:?Set DB_PASSWORD}@db:5432/${DB_NAME:?Set DB_NAME}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      ENVIRONMENT: production
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:?Set CREDENTIALS_ENCRYPTION_KEY}
+      LAN_AGENT_TOKEN: ${LAN_AGENT_TOKEN:?Set LAN_AGENT_TOKEN}
       ALLOW_PUBLIC_REGISTRATION: ${ALLOW_PUBLIC_REGISTRATION:-false}
+      ALLOWED_NETWORKS: ${ALLOWED_NETWORKS:?Set approved device CIDRs}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:?Set corporate FQDN and server IP}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       PYTHONDONTWRITEBYTECODE: "1"
-    cap_add:
-      - NET_RAW
+      PYTHONUNBUFFERED: "1"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test:
         - CMD
@@ -51,6 +69,11 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   postgres_data:

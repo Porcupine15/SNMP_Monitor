@@ -6,6 +6,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app import crud, models
 from app.credentials import device_credentials
+from app.config import ip_is_allowed
 from app.database import SessionLocal
 from app.snmp_client import get_printer_toner, get_switch_port_snapshot, ping_device
 
@@ -51,6 +52,9 @@ def get_monitoring_settings(db) -> dict[str, int]:
 
 
 def _poll_single_device(db, device, *, ping_timeout: int) -> None:
+    if not ip_is_allowed(device.ip):
+        logger.warning("Опрос %s пропущен: адрес вне ALLOWED_NETWORKS", device.ip)
+        return
     online = ping_device(device.ip, timeout=float(ping_timeout))
     status = "online" if online else "offline"
     crud.update_device_status(db, device.id, status)
@@ -70,7 +74,10 @@ def _poll_single_device(db, device, *, ping_timeout: int) -> None:
 
     if device.device_type == "switch":
         ports = get_switch_port_snapshot(*snmp_arguments)
-        crud.update_device_ports(db, device.id, ports)
+        if ports:
+            crud.update_device_ports(db, device.id, ports)
+        else:
+            logger.warning("SNMP returned no ports for %s; cached data preserved", device.ip)
         return
 
     toner = get_printer_toner(*snmp_arguments)

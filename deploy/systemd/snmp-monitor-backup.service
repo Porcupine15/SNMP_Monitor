@@ -1,0 +1,19 @@
+[Unit]
+Description=SNMP Monitor PostgreSQL backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/snmp-monitor
+ExecStart=/opt/snmp-monitor/scripts/backup.sh
+Nice=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/snmp-monitor/backups /run/docker.sock
+LockPersonality=true
+RestrictSUIDSGID=true

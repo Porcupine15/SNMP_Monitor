@@ -3,7 +3,8 @@ from pydantic import BaseModel, Field, field_validator
 from ipaddress import ip_address
 from sqlalchemy.orm import Session
 from app import crud
-from app.auth import get_current_user
+from app.auth import require_roles
+from app.config import ip_is_allowed
 from app.database import get_db
 from app.models import User
 from app.scheduler import get_monitoring_settings
@@ -20,13 +21,21 @@ class PingRequest(BaseModel):
         return str(ip_address(value))
 
 @router.post("")
-def ping(request: PingRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def ping(
+    request: PingRequest,
+    current_user: User = Depends(require_roles("admin", "operator")),
+    db: Session = Depends(get_db),
+):
     from icmplib import ping
+    if not ip_is_allowed(request.ip):
+        raise HTTPException(status_code=403, detail="Target is outside ALLOWED_NETWORKS")
     settings = get_monitoring_settings(db)
     count = request.count or settings["ping_count"]
     timeout = request.timeout or settings["ping_timeout_seconds"]
     try:
-        result = ping(request.ip, count=count, timeout=timeout)
+        # Linux ping sockets do not need a raw-socket capability. Keeping this
+        # unprivileged lets the production container drop every capability.
+        result = ping(request.ip, count=count, timeout=timeout, privileged=False)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Ping failed: {exc}") from exc
     crud.add_audit_event(db, current_user.username, "ping", request.ip)

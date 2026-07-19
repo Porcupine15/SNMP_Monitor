@@ -1,0 +1,33 @@
+services:
+  backend:
+    environment:
+      # The backend is reachable only through this Compose network and the
+      # host loopback binding. Trust nginx forwarding headers for audit IPs.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+
+  proxy:
+    image: nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
+    container_name: snmp_proxy
+    restart: unless-stopped
+    ports:
+      - "${TLS_BIND_ADDRESS:?Set the approved server IP}:443:443"
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./deploy/nginx/snmp-monitor.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${TLS_CERT_PATH:?Set TLS_CERT_PATH}:/etc/nginx/tls/server.crt:ro
+      - ${TLS_KEY_PATH:?Set TLS_KEY_PATH}:/etc/nginx/tls/server.key:ro
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

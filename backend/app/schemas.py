@@ -2,7 +2,7 @@ from datetime import datetime
 from ipaddress import ip_address, ip_network
 import re
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Literal, Optional
 
 
@@ -22,7 +22,7 @@ def normalize_mac(value: Optional[str]) -> Optional[str]:
 # Пользователи
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=12, max_length=128)
     email: Optional[str] = Field(None, max_length=255)
 
     @field_validator("username")
@@ -79,7 +79,7 @@ class DeviceCreate(BaseModel):
     model: str = Field("", max_length=100)
     device_type: DeviceType
     snmp_version: SnmpVersion = "v2c"
-    # For home routers without SNMP, keep the device available for ICMP monitoring.
+    # Devices without SNMP can still be kept for ICMP-only availability checks.
     community: Optional[str] = Field(None, max_length=255)
     snmp_user: Optional[str] = Field(None, max_length=255)
     snmp_auth: Optional[str] = Field(None, max_length=255)
@@ -95,6 +95,12 @@ class DeviceCreate(BaseModel):
     @field_validator("hostname", "model")
     def strip_optional_text(cls, value: str) -> str:
         return value.strip()
+
+    @model_validator(mode="after")
+    def validate_snmp_credentials(self):
+        if self.snmp_version == "v3" and (not self.snmp_user or not self.snmp_auth):
+            raise ValueError("SNMPv3 requires a security username and authentication password")
+        return self
 
 
 class DeviceUpdate(BaseModel):

@@ -6,10 +6,13 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.auth import get_current_user
+from app import crud
+from app.auth import get_current_user, require_roles
 from app.client_discovery import scan
+from app.config import ip_is_allowed, network_is_allowed
 from app.database import get_db
 from app.models import NetworkClient, User
+from app.scan_control import active_network_scan
 from app.schemas import AgentSync, NetworkScanRequest
 
 
@@ -57,6 +60,8 @@ def agent_sync(
     expected = os.getenv("LAN_AGENT_TOKEN", "")
     if not expected or not secrets.compare_digest(x_lan_agent_token, expected):
         raise HTTPException(status_code=401, detail="Invalid LAN agent token")
+    if any(not ip_is_allowed(item.ip) for item in data.clients):
+        raise HTTPException(status_code=403, detail="Agent payload contains an address outside ALLOWED_NETWORKS")
     seen_at = datetime.now(timezone.utc)
     for item in data.clients:
         row = _client_for_observation(db, item.ip, item.mac)
@@ -112,19 +117,32 @@ def clients(
 def scan_clients(
     request: NetworkScanRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_roles("admin", "operator")),
 ):
     network = ipaddress.ip_network(request.network, strict=False)
     if network.num_addresses > 1024:
         raise HTTPException(status_code=400, detail="Maximum 1024 addresses")
-    found = scan(str(network))
-    for item in found:
-        row = _client_for_observation(db, item["ip"], item["mac"])
-        if item["mac"]:
-            row.mac = item["mac"].lower()
-        if item["hostname"]:
-            row.hostname = item["hostname"]
-        row.status = "online"
-        row.last_seen = item["seen_at"]
-    db.commit()
-    return {"found": len(found), "items": found}
+    if not network_is_allowed(str(network)):
+        raise HTTPException(status_code=403, detail="Network is outside ALLOWED_NETWORKS")
+    if not active_network_scan.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Another network scan is already running")
+    try:
+        found = scan(str(network))
+        for item in found:
+            row = _client_for_observation(db, item["ip"], item["mac"])
+            if item["mac"]:
+                row.mac = item["mac"].lower()
+            if item["hostname"]:
+                row.hostname = item["hostname"]
+            row.status = "online"
+            row.last_seen = item["seen_at"]
+        db.commit()
+        crud.add_audit_event(
+            db,
+            current_user.username,
+            "client_scan_completed",
+            f"{network}: {len(found)} client(s) observed",
+        )
+        return {"found": len(found), "items": found}
+    finally:
+        active_network_scan.release()

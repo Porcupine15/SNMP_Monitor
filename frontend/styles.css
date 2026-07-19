@@ -403,13 +403,6 @@ a { color: var(--zyxel-link); }
 .modal-footer { background: #dce8f3; border-color: #aec0d1; }
 .modal-title { color: #214b78; font-size: 13px; font-weight: 700; }
 
-.footer {
-    border-top: 1px solid #b8c7d6;
-    color: #6d8297;
-    font-size: 10px;
-    padding: 10px 0;
-}
-
 .text-muted { color: var(--zyxel-muted) !important; }
 .text-success { color: #2c7844 !important; }
 .text-danger { color: #a33e3e !important; }
@@ -443,8 +436,7 @@ a { color: var(--zyxel-link); }
 
     .corporate-sidebar .navbar-nav { flex-direction: column; width: 100%; }
 
-    #mainWorkspace,
-    #mainApp > .footer {
+    #mainWorkspace {
         margin-left: 220px;
         width: calc(100% - 220px);
     }

@@ -19,6 +19,20 @@
             lab: ['Лабораторный профиль', 'Детерминированные данные без обращения к сети']
         };
 
+        async function configureRegistration() {
+            const link = document.getElementById('toggleRegisterLink');
+            if (!link) return;
+            link.hidden = true;
+            try {
+                const response = await fetch(`${API_BASE}/auth/registration-status`);
+                if (!response.ok) return;
+                const data = await response.json();
+                link.hidden = !data.enabled;
+            } catch (_) {
+                link.hidden = true;
+            }
+        }
+
         // ---------- Переключение форм ----------
         document.getElementById('toggleRegisterLink')?.addEventListener('click', function(e) {
             e.preventDefault();
@@ -70,8 +84,8 @@
                 errorDiv.textContent = 'Пароли не совпадают';
                 return;
             }
-            if (password.length < 8) {
-                errorDiv.textContent = 'Пароль должен быть не менее 8 символов';
+            if (password.length < 12) {
+                errorDiv.textContent = 'Пароль должен быть не менее 12 символов';
                 return;
             }
 
@@ -103,6 +117,10 @@
         function showMainApp() {
             document.getElementById('loginPage').style.display = 'none';
             document.getElementById('mainApp').style.display = 'block';
+            document.getElementById('globalPingButton')?.classList.toggle(
+                'd-none',
+                !hasRole('admin', 'operator')
+            );
         }
 
         function logout() {
@@ -199,6 +217,34 @@
             });
         });
 
+        // Один обработчик для статических и динамически создаваемых кнопок.
+        document.addEventListener('click', (event) => {
+            const trigger = event.target.closest('[data-action]');
+            if (!trigger) return;
+
+            const action = trigger.dataset.action;
+            switch (action) {
+                case 'logout': logout(); break;
+                case 'open-ping': openPingModal(trigger.dataset.ip || ''); break;
+                case 'refresh-devices': refreshDevices(); break;
+                case 'load-page': loadPage(trigger.dataset.pageTarget); break;
+                case 'download-export': downloadExport(trigger.dataset.resource); break;
+                case 'set-user-status': setUserStatus(Number(trigger.dataset.userId), trigger.dataset.active === 'true'); break;
+                case 'view-device': viewDevice(Number(trigger.dataset.deviceId)); break;
+                case 'edit-device': editDevice(Number(trigger.dataset.deviceId)); break;
+                case 'delete-device': deleteDevice(Number(trigger.dataset.deviceId)); break;
+                case 'refresh-port-view': refreshPortView(Number(trigger.dataset.deviceId)); break;
+                case 'edit-port': editPort(Number(trigger.dataset.port)); break;
+                case 'open-lab-profile': openLabProfile(trigger.dataset.profileId); break;
+                default: break;
+            }
+        });
+
+        document.addEventListener('change', (event) => {
+            const control = event.target.closest('[data-action="set-user-role"]');
+            if (control) setUserRole(Number(control.dataset.userId), control.value);
+        });
+
         function loadPage(page) {
             currentPage = page;
             setActiveNavigation(page);
@@ -258,7 +304,7 @@
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <span>Список устройств</span>
-                        <button class="btn btn-primary btn-sm" onclick="refreshDevices()"><i class="fas fa-sync-alt"></i> Обновить</button>
+                        <button class="btn btn-primary btn-sm" type="button" data-action="refresh-devices"><i class="fas fa-sync-alt"></i> Обновить</button>
                     </div>
                     <div class="card-body">
                         <table id="devicesTable" class="table table-bordered table-hover" style="width:100%">
@@ -284,7 +330,7 @@
                     <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
                         <span>Таблица клиентов</span>
                         <form id="clientScanForm" class="d-flex flex-wrap gap-2">
-                            <input id="clientNetwork" class="form-control form-control-sm" style="width:165px" value="192.168.0.0/24" aria-label="Сеть CIDR" spellcheck="false" required>
+                            <input id="clientNetwork" class="form-control form-control-sm" style="width:165px" placeholder="10.20.30.0/24" aria-label="Согласованная сеть CIDR" spellcheck="false" required>
                             <button class="btn btn-primary btn-sm" id="clientScanBtn" type="submit"><i class="fas fa-search me-1"></i>Сканировать</button>
                         </form>
                     </div>
@@ -330,7 +376,7 @@
                 <td>${escapeHtml(client.vendor || '—')}</td>
                 <td>${statusBadge(client.status)}</td>
                 <td>${formatDateTime(client.last_seen)}</td>
-                <td><button class="btn btn-outline-secondary btn-sm" type="button" onclick="pingDevice('${escapeHtml(client.ip)}')" title="Ping ${escapeHtml(client.ip)}"><i class="fas fa-wave-square"></i></button></td>
+                <td>${hasRole('admin', 'operator') ? `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="open-ping" data-ip="${escapeHtml(client.ip)}" title="Ping ${escapeHtml(client.ip)}"><i class="fas fa-wave-square"></i></button>` : '—'}</td>
             </tr>`).join('') || '<tr><td colspan="7" class="empty-state"><i class="fas fa-laptop"></i>Клиенты не найдены. Запустите сканирование или LAN-агент.</td></tr>';
         }
 
@@ -340,7 +386,7 @@
             const network = document.getElementById('clientNetwork').value.trim();
             if (!network.includes('/')) {
                 status.className = 'text-danger';
-                status.textContent = 'Укажите сеть в формате CIDR, например 192.168.0.0/24.';
+                status.textContent = 'Укажите согласованную сеть в формате CIDR, например 10.20.30.0/24.';
                 return;
             }
             button.disabled = true;
@@ -391,11 +437,11 @@
                             <div class="row g-2">
                                 <div class="col-md-4">
                                     <label for="networkInput" class="form-label">Сеть (CIDR)</label>
-                                    <input type="text" class="form-control" id="networkInput" value="192.168.0.0/24" spellcheck="false" required>
+                                    <input type="text" class="form-control" id="networkInput" placeholder="10.20.30.0/24" spellcheck="false" required>
                                 </div>
                                 <div class="col-md-3">
                                     <label for="communityInput" class="form-label">SNMP Community</label>
-                                    <input type="password" class="form-control" id="communityInput" value="public" autocomplete="off">
+                                    <input type="password" class="form-control" id="communityInput" placeholder="read-only community" autocomplete="off" required>
                                 </div>
                                 <div class="col-md-3">
                                     <label for="snmpVersionSelect" class="form-label">Версия SNMP</label>
@@ -418,18 +464,25 @@
                     <div class="card-header">Добавить устройство вручную</div>
                     <div class="card-body">
                         <form id="addDeviceForm" class="row g-2">
-                            <div class="col-md-3"><label class="form-label" for="deviceIp">IP-адрес</label><input id="deviceIp" class="form-control" placeholder="192.168.1.10" required></div>
-                            <div class="col-md-3"><label class="form-label" for="deviceHostname">Имя</label><input id="deviceHostname" class="form-control" placeholder="Home-Switch"></div>
+                            <div class="col-md-3"><label class="form-label" for="deviceIp">IP-адрес</label><input id="deviceIp" class="form-control" placeholder="10.20.30.10" required></div>
+                            <div class="col-md-3"><label class="form-label" for="deviceHostname">Имя</label><input id="deviceHostname" class="form-control" placeholder="Access-SW-01"></div>
                             <div class="col-md-2"><label class="form-label" for="deviceType">Тип</label><select id="deviceType" class="form-select"><option value="switch">Коммутатор</option><option value="router">Маршрутизатор</option><option value="printer">Принтер</option></select></div>
-                            <div class="col-md-2"><label class="form-label" for="deviceVersion">SNMP</label><select id="deviceVersion" class="form-select"><option value="v2c">v2c</option><option value="v1">v1</option></select></div>
-                            <div class="col-md-2"><label class="form-label" for="deviceCommunity">Community</label><input id="deviceCommunity" type="password" autocomplete="off" class="form-control" placeholder="если SNMP включён"></div>
+                            <div class="col-md-2"><label class="form-label" for="deviceVersion">SNMP</label><select id="deviceVersion" class="form-select"><option value="v3">v3 (SHA/AES)</option><option value="v2c">v2c</option><option value="v1">v1</option></select></div>
+                            <div class="col-md-2" id="deviceCommunityGroup"><label class="form-label" for="deviceCommunity">Community</label><input id="deviceCommunity" type="password" autocomplete="off" class="form-control" placeholder="read-only community"></div>
+                            <div class="col-12" id="deviceV3Fields">
+                                <div class="row g-2">
+                                    <div class="col-md-4"><label class="form-label" for="deviceSnmpUser">SNMPv3 User</label><input id="deviceSnmpUser" autocomplete="off" class="form-control"></div>
+                                    <div class="col-md-4"><label class="form-label" for="deviceSnmpAuth">Auth password (SHA)</label><input id="deviceSnmpAuth" type="password" autocomplete="new-password" class="form-control"></div>
+                                    <div class="col-md-4"><label class="form-label" for="deviceSnmpPriv">Privacy password (AES)</label><input id="deviceSnmpPriv" type="password" autocomplete="new-password" class="form-control"></div>
+                                </div>
+                            </div>
                             <div class="col-md-8"><label class="form-label" for="deviceModel">Модель (необязательно)</label><input id="deviceModel" class="form-control" placeholder="Например, MikroTik hAP ax3"></div>
                             <div class="col-md-4 d-flex align-items-end"><button id="addDeviceBtn" class="btn btn-primary w-100" type="submit">Добавить устройство</button></div>
                         </form>
                         <div id="addDeviceResult" class="mt-3"></div>
                     </div>
-                </div>` : `<div class="notice"><strong>Режим просмотра.</strong> Роль ${escapeHtml(currentUser?.role || 'viewer')} не может добавлять управляемые устройства. Demo-профили доступны всем пользователям.</div>`}
-                <div class="card mt-3">
+                </div>` : `<div class="notice"><strong>Режим просмотра.</strong> Роль ${escapeHtml(currentUser?.role || 'viewer')} не может добавлять управляемые устройства.</div>`}
+                <div class="card mt-3" id="labProfilesCard">
                     <div class="card-header">Лаборатория без оборудования</div>
                     <div class="card-body">
                         <p class="text-muted">Профили позволяют проверять экраны VLAN, FDB, ARP, PoE и расходных материалов без SNMP-запросов.</p>
@@ -446,6 +499,14 @@
                 e.preventDefault();
                 await addDevice();
             });
+            const versionSelect = document.getElementById('deviceVersion');
+            const updateCredentialFields = () => {
+                const isV3 = versionSelect?.value === 'v3';
+                document.getElementById('deviceCommunityGroup')?.classList.toggle('d-none', isV3);
+                document.getElementById('deviceV3Fields')?.classList.toggle('d-none', !isV3);
+            };
+            versionSelect?.addEventListener('change', updateCredentialFields);
+            updateCredentialFields();
             loadLabProfiles();
         }
 
@@ -458,9 +519,9 @@
                         ${isAdmin ? '' : '<div class="notice">Параметры показаны без права изменения.</div>'}
                         <form id="opsSettingsForm"><label class="form-label" for="pollInterval">Интервал опроса, с</label><input id="pollInterval" class="form-control mb-2" type="number" min="15" max="3600" ${disabled}><label class="form-label" for="pingCount">Ping: число пакетов</label><input id="pingCount" class="form-control mb-2" type="number" min="1" max="10" ${disabled}><label class="form-label" for="pingTimeout">Ping timeout, с</label><input id="pingTimeout" class="form-control mb-3" type="number" min="1" max="10" ${disabled}>${isAdmin ? '<button class="btn btn-primary" id="opsSaveBtn" type="submit"><i class="fas fa-save me-1"></i>Сохранить</button>' : ''}</form><div id="opsResult" class="mt-2" role="status"></div>
                     </div></div>
-                    <div class="card mt-3"><div class="card-header">Экспорт CSV</div><div class="card-body d-flex flex-wrap gap-2"><button class="btn btn-outline-secondary btn-sm" onclick="downloadExport('devices')">Устройства</button><button class="btn btn-outline-secondary btn-sm" onclick="downloadExport('events')">События</button><button class="btn btn-outline-secondary btn-sm" onclick="downloadExport('clients')">Клиенты</button><button class="btn btn-outline-secondary btn-sm" onclick="downloadExport('availability')">Доступность</button></div></div>
+                    <div class="card mt-3"><div class="card-header">Экспорт CSV</div><div class="card-body d-flex flex-wrap gap-2"><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="devices">Устройства</button><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="events">События</button><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="clients">Клиенты</button><button class="btn btn-outline-secondary btn-sm" type="button" data-action="download-export" data-resource="availability">Доступность</button></div></div>
                 </div>
-                <div class="col-lg-7">${isAdmin ? `<div class="card"><div class="card-header">Аудит действий</div><div class="card-body"><div id="auditList" class="small text-muted">Загрузка…</div></div></div><div class="card mt-3"><div class="card-header">Пользователи и роли</div><div class="card-body"><form id="createUserForm" class="row g-2 mb-3"><div class="col-md-4"><input id="newUsername" class="form-control form-control-sm" placeholder="Логин" minlength="3" required></div><div class="col-md-4"><input id="newUserPassword" type="password" class="form-control form-control-sm" placeholder="Пароль (8+)" minlength="8" required></div><div class="col-md-3"><select id="newUserRole" class="form-select form-select-sm"><option value="viewer">viewer</option><option value="operator">operator</option><option value="admin">admin</option></select></div><div class="col-md-1"><button class="btn btn-primary btn-sm" title="Создать"><i class="fas fa-plus"></i></button></div></form><div id="usersList" class="small text-muted">Загрузка…</div></div></div>` : `<div class="card"><div class="card-header">Права доступа</div><div class="card-body"><p>Ваша роль: <strong>${escapeHtml(currentUser?.role || 'viewer')}</strong>.</p><p class="text-muted mb-0">Аудит, изменение параметров и ролей доступны администратору. Запрещённые API-запросы не отправляются.</p></div></div>`}</div>
+                <div class="col-lg-7">${isAdmin ? `<div class="card"><div class="card-header">Аудит действий</div><div class="card-body"><div id="auditList" class="small text-muted">Загрузка…</div></div></div><div class="card mt-3"><div class="card-header">Пользователи и роли</div><div class="card-body"><form id="createUserForm" class="row g-2 mb-3"><div class="col-md-4"><input id="newUsername" class="form-control form-control-sm" placeholder="Логин" minlength="3" required></div><div class="col-md-4"><input id="newUserPassword" type="password" class="form-control form-control-sm" placeholder="Пароль (12+)" minlength="12" required></div><div class="col-md-3"><select id="newUserRole" class="form-select form-select-sm"><option value="viewer">viewer</option><option value="operator">operator</option><option value="admin">admin</option></select></div><div class="col-md-1"><button class="btn btn-primary btn-sm" title="Создать"><i class="fas fa-plus"></i></button></div></form><div id="usersList" class="small text-muted">Загрузка…</div></div></div>` : `<div class="card"><div class="card-header">Права доступа</div><div class="card-body"><p>Ваша роль: <strong>${escapeHtml(currentUser?.role || 'viewer')}</strong>.</p><p class="text-muted mb-0">Аудит, изменение параметров и ролей доступны администратору. Запрещённые API-запросы не отправляются.</p></div></div>`}</div>
             </div>`;
             loadOperations();
             if (isAdmin) document.getElementById('opsSettingsForm').addEventListener('submit', saveOperations);
@@ -483,7 +544,7 @@
                 document.getElementById('auditList').innerHTML = audit.length ? audit.map(item => `<div class="event-row"><div><strong>${escapeHtml(item.action)}</strong> · ${escapeHtml(item.username)}<br><span class="text-muted">${escapeHtml(item.details || '—')}</span></div><span class="event-time">${formatDateTime(item.time)}</span></div>`).join('') : 'Записей пока нет';
                 if (!usersRes.ok) throw new Error(await apiError(usersRes, 'Не удалось загрузить пользователей'));
                 const users = await usersRes.json();
-                document.getElementById('usersList').innerHTML = users.map(user => `<div class="d-flex gap-2 align-items-center border-bottom py-2"><span class="flex-grow-1"><strong>${escapeHtml(user.username)}</strong>${user.id === currentUser.id ? ' <span class="text-muted">(вы)</span>' : ''}<br><span class="text-muted">${user.is_active ? 'активен' : 'заблокирован'}</span></span><select class="form-select form-select-sm" style="max-width:125px" onchange="setUserRole(${user.id}, this.value)" ${user.id === currentUser.id ? 'disabled' : ''}><option value="admin" ${user.role==='admin'?'selected':''}>admin</option><option value="operator" ${user.role==='operator'?'selected':''}>operator</option><option value="viewer" ${user.role==='viewer'?'selected':''}>viewer</option></select>${user.id === currentUser.id ? '' : `<button class="btn btn-outline-secondary btn-sm" onclick="setUserStatus(${user.id}, ${!user.is_active})">${user.is_active ? 'Блокировать' : 'Включить'}</button>`}</div>`).join('') || 'Пользователей нет';
+                document.getElementById('usersList').innerHTML = users.map(user => `<div class="d-flex gap-2 align-items-center border-bottom py-2"><span class="flex-grow-1"><strong>${escapeHtml(user.username)}</strong>${user.id === currentUser.id ? ' <span class="text-muted">(вы)</span>' : ''}<br><span class="text-muted">${user.is_active ? 'активен' : 'заблокирован'}</span></span><select class="form-select form-select-sm" style="max-width:125px" data-action="set-user-role" data-user-id="${Number(user.id)}" ${user.id === currentUser.id ? 'disabled' : ''}><option value="admin" ${user.role==='admin'?'selected':''}>admin</option><option value="operator" ${user.role==='operator'?'selected':''}>operator</option><option value="viewer" ${user.role==='viewer'?'selected':''}>viewer</option></select>${user.id === currentUser.id ? '' : `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="set-user-status" data-user-id="${Number(user.id)}" data-active="${!user.is_active}">${user.is_active ? 'Блокировать' : 'Включить'}</button>`}</div>`).join('') || 'Пользователей нет';
             } catch (error) {
                 const target = document.getElementById('auditList') || document.getElementById('opsResult');
                 if (target) { target.className = 'text-danger'; target.textContent = `Ошибка: ${error.message}`; }
@@ -558,7 +619,10 @@
                 model: document.getElementById('deviceModel').value.trim(),
                 device_type: document.getElementById('deviceType').value,
                 snmp_version: document.getElementById('deviceVersion').value,
-                community: document.getElementById('deviceCommunity').value.trim() || null
+                community: document.getElementById('deviceCommunity').value.trim() || null,
+                snmp_user: document.getElementById('deviceSnmpUser').value.trim() || null,
+                snmp_auth: document.getElementById('deviceSnmpAuth').value || null,
+                snmp_priv: document.getElementById('deviceSnmpPriv').value || null
             };
             try {
                 const res = await apiFetch('/admin/devices', { method: 'POST', body: JSON.stringify(device) });
@@ -566,6 +630,7 @@
                 result.className = 'mt-3 text-success';
                 result.textContent = 'Устройство добавлено. Теперь можно открыть его порты в списке устройств.';
                 document.getElementById('addDeviceForm').reset();
+                document.getElementById('deviceVersion')?.dispatchEvent(new Event('change'));
             } catch (error) {
                 result.className = 'mt-3 text-danger';
                 result.textContent = `Ошибка: ${error.message}`;
@@ -582,8 +647,8 @@
             const resultDiv = document.getElementById('discoveryResult');
             const btn = document.getElementById('discoveryBtn');
 
-            if (!network) {
-                resultDiv.innerHTML = `<div class="alert alert-danger">Укажите сеть в формате CIDR</div>`;
+            if (!network || !community) {
+                resultDiv.innerHTML = `<div class="alert alert-danger">Укажите сеть CIDR и read-only community</div>`;
                 return;
             }
 
@@ -722,10 +787,10 @@
                     <td>${statusBadge(d.status)}</td>
                     <td>${formatDateTime(d.last_seen)}</td>
                     <td>
-                        <button class="btn btn-outline-secondary btn-sm" onclick="pingDevice('${escapeHtml(d.ip)}')"><i class="fas fa-wave-square"></i> Ping</button>
-                        ${d.type === 'switch' ? `<button class="btn btn-outline-secondary btn-sm" onclick="viewDevice(${Number(d.id)})" title="Открыть порты"><i class="fas fa-ethernet"></i></button>` : ''}
-                        ${hasRole('admin', 'operator') ? `<button class="btn btn-outline-secondary btn-sm" onclick="editDevice(${Number(d.id)})" title="Изменить"><i class="fas fa-pen"></i></button>` : ''}
-                        ${hasRole('admin') ? `<button class="btn btn-outline-danger btn-sm" onclick="deleteDevice(${Number(d.id)})" title="Удалить"><i class="fas fa-trash"></i></button>` : ''}
+                        ${hasRole('admin', 'operator') ? `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="open-ping" data-ip="${escapeHtml(d.ip)}"><i class="fas fa-wave-square"></i> Ping</button>` : ''}
+                        ${d.type === 'switch' ? `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="view-device" data-device-id="${Number(d.id)}" title="Открыть порты"><i class="fas fa-ethernet"></i></button>` : ''}
+                        ${hasRole('admin', 'operator') ? `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="edit-device" data-device-id="${Number(d.id)}" title="Изменить"><i class="fas fa-pen"></i></button>` : ''}
+                        ${hasRole('admin') ? `<button class="btn btn-outline-danger btn-sm" type="button" data-action="delete-device" data-device-id="${Number(d.id)}" title="Удалить"><i class="fas fa-trash"></i></button>` : ''}
                     </td>
                 </tr>
             `).join('');
@@ -820,6 +885,10 @@
         }
 
         function openPingModal(ip = '') {
+            if (!hasRole('admin', 'operator')) {
+                showToast('Ping доступен администратору и оператору', 'danger');
+                return;
+            }
             document.getElementById('pingIp').value = ip;
             document.getElementById('pingCountModal').value = pingDefaults.count;
             document.getElementById('pingTimeoutModal').value = pingDefaults.timeout;
@@ -863,14 +932,15 @@
 
         async function renderPortView(deviceId) {
             currentPage = 'ports';
+            window.currentPortDeviceId = Number(deviceId);
             const content = document.getElementById('pageContent');
             content.innerHTML = `
                 <div class="card">
                     <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
                         <span><i class="fas fa-ethernet me-2"></i>Порты коммутатора</span>
                         <div>
-                            <button class="btn btn-outline-secondary btn-sm" onclick="loadPage('devices')">К устройствам</button>
-                            <button id="refreshPortsBtn" class="btn btn-primary btn-sm" onclick="refreshPortView(${deviceId})"><i class="fas fa-sync-alt"></i> Опросить SNMP</button>
+                            <button class="btn btn-outline-secondary btn-sm" type="button" data-action="load-page" data-page-target="devices">К устройствам</button>
+                            <button id="refreshPortsBtn" class="btn btn-primary btn-sm" type="button" data-action="refresh-port-view" data-device-id="${Number(deviceId)}"><i class="fas fa-sync-alt"></i> Опросить SNMP</button>
                         </div>
                     </div>
                     <div class="card-body">
@@ -917,20 +987,16 @@
                     <td>${escapeHtml(port.speed || '—')}</td>
                     <td><span title="${escapeHtml(macs.join(', '))}">${macs.length ? `${macs.length}: ${escapeHtml(macs.slice(0, 2).join(', '))}${macs.length > 2 ? '…' : ''}` : '—'}</span></td>
                     <td>${ips.length ? escapeHtml(ips.join(', ')) : '—'}</td>
-                    <td>${allowEdit ? `<button class="btn btn-outline-secondary btn-sm" onclick="editPort(${port.port})">Изменить</button>` : '—'}</td>
+                    <td>${allowEdit ? `<button class="btn btn-outline-secondary btn-sm" type="button" data-action="edit-port" data-port="${escapeHtml(port.port)}">Изменить</button>` : '—'}</td>
                 </tr>`;
             }).join('');
-            const refreshButton = document.getElementById('refreshPortsBtn');
-            if (refreshButton) {
-                window.currentPortDeviceId = Number(refreshButton.getAttribute('onclick').match(/\d+/)[0]);
-            }
         }
 
         async function showLabSwitch() {
             const content = document.getElementById('pageContent');
             content.innerHTML = `
                 <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-center"><span><i class="fas fa-flask me-2"></i>LAB-SW-24G · эмулятор</span><button class="btn btn-outline-secondary btn-sm" onclick="loadPage('settings')">К настройкам</button></div>
+                    <div class="card-header d-flex justify-content-between align-items-center"><span><i class="fas fa-flask me-2"></i>LAB-SW-24G · эмулятор</span><button class="btn btn-outline-secondary btn-sm" type="button" data-action="load-page" data-page-target="settings">К настройкам</button></div>
                     <div class="card-body"><p id="labStatus" class="text-muted">Загрузка тестового профиля…</p><div class="table-responsive"><table class="table table-bordered table-hover align-middle"><thead><tr><th>Порт</th><th>Статус</th><th>Описание</th><th>Режим</th><th>PVID</th><th>Скорость</th><th>MAC</th><th>IP из ARP</th><th></th></tr></thead><tbody id="portsTableBody"></tbody></table></div></div>
                 </div>`;
             try {
@@ -950,9 +1016,13 @@
             if (!target) return;
             try {
                 const response = await apiFetch('/lab/profiles');
+                if (response.status === 404) {
+                    document.getElementById('labProfilesCard')?.remove();
+                    return;
+                }
                 if (!response.ok) throw new Error(await apiError(response, 'Не удалось загрузить профили'));
                 const data = await response.json();
-                target.innerHTML = (data.items || []).map(profile => `<button class="lab-profile" type="button" onclick="openLabProfile('${escapeHtml(profile.id)}')"><i class="fas ${profile.type === 'printer' ? 'fa-print' : profile.type === 'router' ? 'fa-router' : 'fa-network-wired'}"></i><strong>${escapeHtml(profile.name)}</strong><span>${escapeHtml(profile.type)}</span></button>`).join('') || '<span class="text-muted">Профилей нет</span>';
+                target.innerHTML = (data.items || []).map(profile => `<button class="lab-profile" type="button" data-action="open-lab-profile" data-profile-id="${escapeHtml(profile.id)}"><i class="fas ${profile.type === 'printer' ? 'fa-print' : profile.type === 'router' ? 'fa-router' : 'fa-network-wired'}"></i><strong>${escapeHtml(profile.name)}</strong><span>${escapeHtml(profile.type)}</span></button>`).join('') || '<span class="text-muted">Профилей нет</span>';
             } catch (error) {
                 target.innerHTML = `<span class="text-danger">${escapeHtml(error.message)}</span>`;
             }
@@ -965,10 +1035,10 @@
             if (!response.ok) { content.innerHTML = `<div class="notice">${escapeHtml(await apiError(response))}</div>`; return; }
             const data = await response.json();
             if (Array.isArray(data.ports)) {
-                content.innerHTML = `<div class="card"><div class="card-header d-flex justify-content-between"><span>${escapeHtml(data.name)}</span><button class="btn btn-outline-secondary btn-sm" onclick="loadPage('settings')">Назад</button></div><div class="card-body"><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Порт</th><th>Статус</th><th>Описание</th><th>Режим</th><th>PVID</th><th>Скорость</th><th>MAC</th><th>IP</th><th></th></tr></thead><tbody id="portsTableBody"></tbody></table></div></div></div>`;
+                content.innerHTML = `<div class="card"><div class="card-header d-flex justify-content-between"><span>${escapeHtml(data.name)}</span><button class="btn btn-outline-secondary btn-sm" type="button" data-action="load-page" data-page-target="settings">Назад</button></div><div class="card-body"><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Порт</th><th>Статус</th><th>Описание</th><th>Режим</th><th>PVID</th><th>Скорость</th><th>MAC</th><th>IP</th><th></th></tr></thead><tbody id="portsTableBody"></tbody></table></div></div></div>`;
                 renderPorts(data.ports, document.getElementById('portsTableBody'), false);
             } else {
-                content.innerHTML = `<div class="card"><div class="card-header d-flex justify-content-between"><span>${escapeHtml(data.name || profileId)}</span><button class="btn btn-outline-secondary btn-sm" onclick="loadPage('settings')">Назад</button></div><div class="card-body"><pre class="lab-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre></div></div>`;
+                content.innerHTML = `<div class="card"><div class="card-header d-flex justify-content-between"><span>${escapeHtml(data.name || profileId)}</span><button class="btn btn-outline-secondary btn-sm" type="button" data-action="load-page" data-page-target="settings">Назад</button></div><div class="card-body"><pre class="lab-json">${escapeHtml(JSON.stringify(data, null, 2))}</pre></div></div>`;
             }
         }
 
@@ -1032,6 +1102,7 @@
 
         // ---------- Запуск приложения ----------
         document.addEventListener('DOMContentLoaded', function() {
+            configureRegistration();
             const token = localStorage.getItem('access_token');
             if (token) {
                 fetch(`${API_BASE}/auth/me`, {

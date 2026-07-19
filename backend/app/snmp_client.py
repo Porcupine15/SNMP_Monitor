@@ -14,10 +14,11 @@ OID_IF_DESCR = '1.3.6.1.2.1.2.2.1.2'
 OID_IF_OPER_STATUS = '1.3.6.1.2.1.2.2.1.8'
 OID_IF_ALIAS = '1.3.6.1.2.1.31.1.1.1.18'   # ifAlias
 OID_IF_SPEED = '1.3.6.1.2.1.2.2.1.5'
-OID_MAC_ADDRESS = '1.3.6.1.2.1.17.4.3.1.1'  # dot1dTpFdbPort
+OID_FDB_ADDRESS = '1.3.6.1.2.1.17.4.3.1.1'  # dot1dTpFdbAddress
+OID_FDB_PORT = '1.3.6.1.2.1.17.4.3.1.2'  # dot1dTpFdbPort
 OID_BRIDGE_PORT_IF_INDEX = '1.3.6.1.2.1.17.1.4.1.2'  # dot1dBasePortIfIndex
 OID_DOT1Q_PVID = '1.3.6.1.2.1.17.7.1.4.5.1.1'  # dot1qPvid, indexed by bridge port
-OID_MAC_STATUS = '1.3.6.1.2.1.17.4.3.1.2'
+OID_FDB_STATUS = '1.3.6.1.2.1.17.4.3.1.3'
 OID_ARP_IP = '1.3.6.1.2.1.4.22.1.2'  # ipNetToMediaPhysAddress
 OID_ARP_MAC = '1.3.6.1.2.1.4.22.1.3'  # ipNetToMediaNetAddress
 OID_ARP_TYPE = '1.3.6.1.2.1.4.22.1.4'
@@ -27,7 +28,7 @@ OID_TONER = '1.3.6.1.2.1.43.11.1.1.9.1.1'  # пример для принтер�
 def ping_device(ip: str, timeout: float = 2.0) -> bool:
     """Проверяет доступность устройства по ICMP ping."""
     try:
-        result = ping(ip, count=1, timeout=timeout)
+        result = ping(ip, count=1, timeout=timeout, privileged=False)
         return result.is_alive
     except Exception as e:
         logger.error(f"Ping error {ip}: {e}")
@@ -40,16 +41,19 @@ def _snmp_session(ip: str, community: str = 'public', version: str = 'v2c',
                   snmp_priv: Optional[str] = None) -> Session:
     """Создаёт SNMP-сессию. Поддерживает v1, v2c, v3."""
     if version == 'v3':
-        # Для SNMPv3 нужны дополнительные параметры
+        if not snmp_user or not snmp_auth:
+            raise ValueError("SNMPv3 requires a security username and authentication password")
         return Session(
             hostname=ip,
             version=3,
-            security_username=snmp_user or '',
+            security_username=snmp_user,
             security_level='authPriv' if snmp_priv else 'authNoPriv',
-            auth_protocol='SHA' if snmp_auth else None,
-            auth_password=snmp_auth or '',
+            auth_protocol='SHA',
+            auth_password=snmp_auth,
             privacy_protocol='AES' if snmp_priv else None,
-            privacy_password=snmp_priv or ''
+            privacy_password=snmp_priv or '',
+            timeout=2,
+            retries=1,
         )
     else:
         version_int = 1 if version == 'v1' else 2
@@ -93,7 +97,7 @@ def get_device_info(ip: str, community: str = 'public', version: str = 'v2c',
             'uptime': sys_uptime,
             'status': 'online'
         }
-    except exceptions.EasySNMPError as e:
+    except (exceptions.EasySNMPError, ValueError) as e:
         logger.warning(f"SNMP error for {ip}: {e}")
         return {}
 
@@ -142,7 +146,7 @@ def get_switch_ports(ip: str, community: str = 'public', version: str = 'v2c',
                 'speed': data.get('speed', '')
             })
         return ports
-    except exceptions.EasySNMPError as e:
+    except (exceptions.EasySNMPError, ValueError) as e:
         logger.error(f"SNMP error getting ports for {ip}: {e}")
         return []
 
@@ -159,8 +163,9 @@ def get_mac_table(ip: str, community: str = 'public', version: str = 'v2c',
             int(item.oid_index): int(item.value)
             for item in session.walk(OID_BRIDGE_PORT_IF_INDEX)
         }
-        # dot1dTpFdbPort возвращает номер bridge-порта, а не ifIndex интерфейса.
-        for item in session.walk(OID_MAC_ADDRESS):
+        # The FDB port column is indexed by MAC and returns a bridge-port number,
+        # which must then be mapped to the interface ifIndex.
+        for item in session.walk(OID_FDB_PORT):
             bridge_port = int(item.value)
             macs.append({
                 'mac': _format_mac(item.oid_index),
@@ -168,7 +173,7 @@ def get_mac_table(ip: str, community: str = 'public', version: str = 'v2c',
                 'bridge_port': bridge_port,
             })
         return macs
-    except exceptions.EasySNMPError as e:
+    except (exceptions.EasySNMPError, ValueError) as e:
         logger.error(f"SNMP error getting MAC table for {ip}: {e}")
         return []
 
@@ -190,7 +195,7 @@ def get_arp_table(ip: str, community: str = 'public', version: str = 'v2c',
 
         # Можно также получить дополнительно тип, но не обязательно
         return list(arp.values())
-    except exceptions.EasySNMPError as e:
+    except (exceptions.EasySNMPError, ValueError) as e:
         logger.error(f"SNMP error getting ARP table for {ip}: {e}")
         return []
 
@@ -257,6 +262,6 @@ def get_printer_toner(ip: str, community: str = 'public', version: str = 'v2c',
         toner = session.get(OID_TONER).value
         # Иногда значение в процентах, иногда в абсолютных единицах
         return int(toner) if toner.isdigit() else 0
-    except exceptions.EasySNMPError as e:
+    except (exceptions.EasySNMPError, ValueError) as e:
         logger.error(f"SNMP error getting toner for {ip}: {e}")
         return 0

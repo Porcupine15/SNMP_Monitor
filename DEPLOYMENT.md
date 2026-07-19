@@ -3,9 +3,13 @@
 Приложение запускается в отдельной Debian VM. На хост Proxmox Docker и
 исходный код устанавливать не нужно.
 
+Для производственной корпоративной сети используйте полную инструкцию
+[CORPORATE_DEPLOYMENT.md](CORPORATE_DEPLOYMENT.md). Она содержит обязательные
+ACL, HTTPS, чистое создание секретов и БД, пилот SNMP, backup/restore и откат.
+
 ## Требования к VM
 
-- Debian 13 amd64 без графического окружения;
+- Debian 12/13 amd64 без графического окружения;
 - 2 vCPU, 4 ГБ RAM, 32–40 ГБ диска;
 - сетевой адаптер VirtIO, подключённый к `vmbr0`;
 - постоянный адрес в локальной сети;
@@ -13,12 +17,15 @@
 
 ## Получение проекта
 
-Создайте каталог от имени пользователя, который будет выполнять развёртывание:
+Разворачивайте зафиксированный tag или commit, а не изменяющуюся ветку:
 
 ```bash
-sudo install -d -o "$USER" -g "$USER" /opt/snmp-monitor
-git clone <URL_РЕПОЗИТОРИЯ> /opt/snmp-monitor
+export REPOSITORY_URL='git@github.com:Porcupine15/SNMP_Monitor.git'
+export RELEASE='REPLACE_WITH_APPROVED_TAG_OR_SHA'
+sudo git clone "$REPOSITORY_URL" /opt/snmp-monitor
 cd /opt/snmp-monitor
+sudo git checkout --detach "$RELEASE"
+sudo chown -R root:root /opt/snmp-monitor
 ```
 
 Для закрытого репозитория используйте отдельный read-only deploy key, а не
@@ -26,53 +33,84 @@ cd /opt/snmp-monitor
 
 ## Переменные окружения
 
-```bash
-cp .env.example .env
-chmod 600 .env
-```
-
-Сгенерируйте три независимых значения:
+Создавайте новый `.env` на целевой VM. Домашний `.env` и домашнюю БД в
+корпоративную среду переносить нельзя.
 
 ```bash
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
-python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())'
-python3 -c 'import secrets; print(secrets.token_urlsafe(48))'
+sudo install -o root -g root -m 600 .env.example .env
+sudoedit .env
 ```
 
-Запишите их в `.env` соответственно как `SECRET_KEY`,
-`CREDENTIALS_ENCRYPTION_KEY` и `LAN_AGENT_TOKEN`. Также замените
-`DB_PASSWORD`. Не коммитьте и не пересылайте содержимое `.env`.
+Сгенерируйте четыре независимых значения:
+
+```bash
+python3 -c 'import secrets; print(secrets.token_urlsafe(48))'  # DB_PASSWORD
+python3 -c 'import secrets; print(secrets.token_urlsafe(64))'  # SECRET_KEY
+python3 -c 'import base64,secrets; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())'  # CREDENTIALS_ENCRYPTION_KEY
+python3 -c 'import secrets; print(secrets.token_urlsafe(48))'  # LAN_AGENT_TOKEN
+```
+
+Запишите их в `.env` соответственно как `DB_PASSWORD`, `SECRET_KEY`,
+`CREDENTIALS_ENCRYPTION_KEY` и `LAN_AGENT_TOKEN`. Не коммитьте и не
+пересылайте содержимое `.env`.
+
+Также заполните `ENVIRONMENT=production`, точные `ALLOWED_NETWORKS`,
+`TRUSTED_HOSTS`, пути TLS-сертификата/ключа и оставьте
+`ALLOW_PUBLIC_REGISTRATION=false`. Полный пример есть в корпоративной
+инструкции.
 
 ## Первый запуск
 
+Production-интерфейс публикуется только по HTTPS через `compose.tls.yml`.
+Сначала запускается PostgreSQL, затем явно применяется Alembic, интерактивно
+создаётся первый администратор и только после этого запускаются backend и
+reverse proxy:
+
 ```bash
-docker compose -f compose.production.yml config --quiet
-docker compose -f compose.production.yml up -d --build
-docker compose -f compose.production.yml ps
-docker compose -f compose.production.yml logs backend --tail 100
-curl --fail http://127.0.0.1:8000/api/health
+export ADMIN_USERNAME='snmp-admin'
+export ADMIN_EMAIL='snmp-admin@corp.example'
+export FQDN='snmp-monitor.corp.example'
+sudo docker compose -f compose.production.yml -f compose.tls.yml config --quiet
+sudo docker compose -f compose.production.yml -f compose.tls.yml build backend
+sudo docker compose -f compose.production.yml -f compose.tls.yml up -d db
+sudo docker compose -f compose.production.yml -f compose.tls.yml \
+  run --rm backend alembic -c alembic.ini upgrade head
+sudo docker compose -f compose.production.yml -f compose.tls.yml \
+  run --rm backend python -m app.bootstrap_admin \
+  --username "$ADMIN_USERNAME" --email "$ADMIN_EMAIL"
+sudo docker compose -f compose.production.yml -f compose.tls.yml \
+  up -d backend proxy
+sudo docker compose -f compose.production.yml -f compose.tls.yml ps
+curl --fail "https://${FQDN}/api/health"
 ```
 
-Миграции Alembic применяются контейнером backend перед запуском приложения.
-Интерфейс будет доступен по адресу `http://<IP_VM>:8000`.
+Пароль bootstrap-admin вводится дважды без отображения. Интерфейс доступен
+только по `https://<КОРПОРАТИВНЫЙ_FQDN>/`; порт 8000 остаётся привязанным к
+loopback VM, а PostgreSQL наружу не публикуется.
 
 ## Обновление
 
-Сначала сделайте резервную копию базы, затем загрузите новую версию:
+Сначала сделайте и проверьте резервную копию, затем загрузите зафиксированный
+релиз, остановите Web-компоненты и явно примените миграцию:
 
 ```bash
 cd /opt/snmp-monitor
-mkdir -p backups
-set -a; . ./.env; set +a
-docker compose -f compose.production.yml exec -T db \
-  pg_dump -U "$DB_USER" -d "$DB_NAME" -Fc > "backups/snmp-$(date +%F-%H%M%S).dump"
-git pull --ff-only
-docker compose -f compose.production.yml up -d --build
-docker compose -f compose.production.yml ps
+export NEW_RELEASE='REPLACE_WITH_NEW_TAG_OR_SHA'
+sudo ./scripts/backup.sh
+sudo git fetch --tags --prune
+sudo git checkout --detach "$NEW_RELEASE"
+sudo docker compose -f compose.production.yml -f compose.tls.yml build backend
+sudo docker compose -f compose.production.yml -f compose.tls.yml stop proxy backend
+sudo docker compose -f compose.production.yml -f compose.tls.yml \
+  run --rm backend alembic -c alembic.ini upgrade head
+sudo docker compose -f compose.production.yml -f compose.tls.yml \
+  up -d backend proxy
+sudo docker compose -f compose.production.yml -f compose.tls.yml ps
 ```
 
-Альтернатива загрузке `.env` в текущую оболочку — подставить имя пользователя
-и базы в команду `pg_dump` явно.
+При откате после изменения схемы верните не только предыдущий код/image, но и
+предобновленческий дамп. Точная последовательность описана в
+[CORPORATE_DEPLOYMENT.md](CORPORATE_DEPLOYMENT.md#12-откат).
 
 ## Важные данные
 
@@ -84,5 +122,6 @@ docker compose -f compose.production.yml ps
 - резервная копия VM средствами Proxmox.
 
 Порт PostgreSQL в production-конфигурации не публикуется в локальную сеть.
-Не настраивайте проброс портов `8000`, `5432`, `22` или `8006` на домашнем
-роутере без отдельного VPN и правил доступа.
+Порты `8000` и `5432` не открывайте через firewall. TCP/443 и SSH разрешайте
+только из согласованных административных сетей; Proxmox `8006` не относится к
+приложению и также должен оставаться в отдельном management-контуре.
