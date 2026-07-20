@@ -58,7 +58,9 @@ Backup job --> зашифрованное или защищённое храни
 | VM SNMP Monitor | Явно согласованные устройства | ICMP Echo | Проверка доступности |
 | VM SNMP Monitor | Корпоративный DNS | UDP/TCP 53 | Имена и FQDN |
 | VM SNMP Monitor | Корпоративный NTP | UDP/123 | Корректное время JWT и журнала |
-| VM/станция сборки | Git/registry | TCP/443 | Только установка и обновление; необязательно при offline-доставке |
+| VM/станция сборки | Git по HTTPS, OCI/Docker registry, PyPI | TCP/443 | Online-установка и обновление |
+| VM/станция сборки | Git-сервер по SSH | TCP/22 | Git-вариант с read-only deploy key |
+| VM/станция сборки | Debian APT-зеркало | TCP/80/443 | Системные пакеты при сборке backend |
 | VM SNMP Monitor | PKI/CRL/OCSP | по политике PKI | Проверка сертификатов, если требуется |
 
 Не публикуйте в корпоративную сеть:
@@ -94,21 +96,11 @@ sudo docker run --rm hello-world
 ## 4. Доставка только зафиксированного релиза
 
 Не разворачивайте изменяющуюся ветку `main` без фиксации SHA. Используйте
-проверенный tag или commit и запишите его в заявку на изменение:
-
-```bash
-export REPOSITORY_URL='git@github.com:Porcupine15/SNMP_Monitor.git'
-export RELEASE='REPLACE_WITH_APPROVED_TAG_OR_SHA'
-sudo git clone "$REPOSITORY_URL" /opt/snmp-monitor
-cd /opt/snmp-monitor
-sudo git checkout --detach "$RELEASE"
-sudo git rev-parse HEAD
-```
-
-Для закрытого репозитория используйте отдельный read-only deploy key. Не
-копируйте на сервер личный GitHub-токен или основной SSH-ключ. Так как clone и
-последующие обновления выполняются через `sudo`, deploy key должен быть
-доступен именно root либо релиз следует доставлять offline-пакетом.
+проверенный tag или commit и запишите его в заявку на изменение. Актуальные
+команды доставки через Git staging или проверенный ZIP приведены в
+[README.md](README.md#1-получить-зафиксированный-релиз). Production-копия устанавливается как
+`root:root` без `.git`; Git-ключ остаётся у отдельного deploy-пользователя, а не
+у root и не в `/opt/snmp-monitor`.
 
 До передачи релиза результаты автоматических тестов должны быть успешными,
 рабочее дерево — чистым, а SHA — зафиксированным. По принятому в организации
@@ -412,135 +404,43 @@ sudo systemctl list-timers snmp-monitor-backup.timer
 
 ## 11. Обновление
 
-Каждое обновление выполняется в окно изменений. До миграции БД обязательно
-сохраните дамп и предыдущий release/image:
+Каждое обновление выполняется в окно изменений. Единая актуальная процедура
+для Git- и ZIP-доставки приведена в [README.md](README.md#обновление-production).
+Она обязательно:
 
-```bash
-cd /opt/snmp-monitor
-export CHANGE_ID='CHG-REPLACE-ME'
-export NEW_RELEASE='REPLACE_WITH_NEW_TAG_OR_SHA'
-sudo ./scripts/backup.sh
-# Подставьте полный путь, напечатанный только что завершившимся backup.sh.
-export PRE_UPDATE_DUMP='/opt/snmp-monitor/backups/REPLACE_WITH_PREUPDATE_DUMP.dump'
-sudo sha256sum -c "${PRE_UPDATE_DUMP}.sha256"
+- создаёт и фиксирует предобновленческий дамп;
+- тегирует точный image работающего backend;
+- готовит релиз в `/opt/snmp-monitor-next`;
+- собирает и проверяет новый image до остановки production;
+- заменяет целый каталог, не копируя новые файлы поверх старых.
 
-sudo git rev-parse HEAD
-PREVIOUS_IMAGE="$(sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  images -q backend)"
-sudo docker image tag "$PREVIOUS_IMAGE" \
-  "snmp-monitor-backend:rollback-${CHANGE_ID}"
-
-sudo git fetch --tags --prune
-sudo git checkout --detach "$NEW_RELEASE"
-# Сравните новые обязательные переменные с действующим .env и release notes.
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  build backend
-
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  stop proxy backend
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  run --rm backend alembic -c alembic.ini upgrade head
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  up -d backend proxy
-
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  ps
-curl --fail --show-error https://snmp-monitor.corp.example/api/health
-```
-
-Не выполняйте автоматический `git pull && up --build` без дампа и просмотра
-миграций. Не удаляйте предыдущий image и предобновленческий дамп до завершения
-периода наблюдения.
+Не выполняйте `git pull`, `git fetch` или `git checkout` в
+`/opt/snmp-monitor`: production-каталог не содержит `.git`.
 
 ## 12. Откат
 
 Откат приложения после миграции схемы — это возврат **и кода/image, и БД**.
 Старый backend поверх новой схемы без подтверждённой совместимости запускать
-нельзя.
+нельзя. Точная проверяемая последовательность возврата каталога, image и дампа
+приведена в разделе [README.md — «Откат после несовместимой миграции»](README.md#откат-после-несовместимой-миграции).
 
-1. Остановите proxy и backend.
-2. Верните зафиксированный предыдущий tag/SHA или загрузите сохранённый image.
-3. Проверьте, что `.env` и `CREDENTIALS_ENCRYPTION_KEY` относятся к этой
-   корпоративной установке и не менялись.
-4. Восстановите предобновленческий дамп через `restore.sh`.
-5. Поднимите backend и proxy двумя Compose-файлами.
-6. Проверьте HTTPS health, вход, список устройств и один SNMP-опрос.
-7. Верните DNS/ACL, если они менялись при cutover, и задокументируйте результат.
+## 13. Полностью offline-доставка
 
-Пример после возврата исходников на предыдущий release:
+Готовый проверенный пакет для полностью изолированной VM в текущей версии **не
+поставляется**. Одного ZIP с исходниками недостаточно. Не используйте непроверенную
+схему `docker save/load`: Compose ссылается на образы PostgreSQL/Nginx по зафиксированным
+multi-platform digest, а обычный archive образа может не сохранить RepoDigest после загрузки.
 
-```bash
-cd /opt/snmp-monitor
-export PRE_UPDATE_DUMP='/opt/snmp-monitor/backups/REPLACE_WITH_PREUPDATE_DUMP.dump'
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  stop proxy backend
-# Либо соберите предыдущий checkout, либо верните заранее сохранённый image tag.
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  build backend
-sudo ./scripts/restore.sh "$PRE_UPDATE_DUMP"
-sudo docker compose \
-  -f compose.production.yml -f compose.tls.yml \
-  up -d backend proxy
-curl --fail --show-error https://snmp-monitor.corp.example/api/health
-```
+Для изолированного контура нужен отдельный согласованный release-артефакт и один из
+двух проверенных подходов:
 
-## 13. Offline-доставка
+- внутренний OCI/Docker registry, который хранит утверждённые образы и
+  доступен VM по контролируемому ACL;
+- отдельный `compose.offline.yml` с уникальными локальными тегами и `pull_policy: never`,
+  проверенный вместе с миграциями, backup/restore и systemd-службами.
 
-Если production VM не имеет доступа к Git и registry, соберите пакет на
-доверенной машине той же архитектуры. Зафиксируйте release до сборки:
-
-```bash
-export RELEASE='REPLACE_WITH_APPROVED_TAG_OR_SHA'
-git checkout --detach "$RELEASE"
-export SOURCE_DIR="$PWD"
-export ARTIFACT_DIR="$(dirname "$SOURCE_DIR")/snmp-monitor-release-${RELEASE}"
-mkdir -p "$ARTIFACT_DIR"
-docker build --pull \
-  -f backend/Dockerfile \
-  -t snmp-monitor-backend:latest .
-docker pull postgres:15-alpine@sha256:cd17e2ac98240fce1541ad2a803b34009b4eea5aec8a832363cdc7eca62e722e
-docker pull nginx:1.28-alpine@sha256:a8b39bd9cf0f83869a2162827a0caf6137ddf759d50a171451b335cecc87d236
-docker save \
-  snmp-monitor-backend:latest postgres:15-alpine nginx:1.28-alpine \
-  -o "$ARTIFACT_DIR/snmp-monitor-images.tar"
-tar -C "$SOURCE_DIR" \
-  --exclude=.git --exclude=.env --exclude=backups --exclude=graphify-out \
-  -czf "$ARTIFACT_DIR/snmp-monitor-source.tar.gz" .
-cd "$ARTIFACT_DIR"
-sha256sum snmp-monitor-images.tar snmp-monitor-source.tar.gz > SHA256SUMS
-```
-
-Передайте три файла по одобренному каналу. На сервере проверьте checksum,
-загрузите образы и только затем создавайте новый production `.env`:
-
-```bash
-sha256sum -c SHA256SUMS
-sudo install -d -o root -g root -m 755 /opt/snmp-monitor
-sudo tar -xzf snmp-monitor-source.tar.gz -C /opt/snmp-monitor
-sudo chown -R root:root /opt/snmp-monitor
-sudo docker load -i snmp-monitor-images.tar
-cd /opt/snmp-monitor
-sudo docker compose -p snmp-monitor \
-  -f compose.production.yml -f compose.tls.yml \
-  config --quiet
-```
-
-Далее выполните разделы 5–9, но пропустите команду `build backend` в разделе 7
-и не добавляйте `--build`: Compose использует загруженный
-`snmp-monitor-backend:latest`. Версии Docker Engine/Compose и все необходимые
-OS-пакеты также должны быть установлены из корпоративного offline-репозитория
-заранее.
-
-Для более строгого процесса образы следует фиксировать digest, подписывать и
-проверять принятым в организации средством supply-chain контроля.
+Пока такой артефакт не собран и не прошёл приёмку, используйте контролируемый
+выход к утверждённому внутреннему registry/APT/PyPI-зеркалам либо отложите развёртывание.
 
 ## 14. Известные ограничения текущей версии
 
@@ -556,8 +456,10 @@ OS-пакеты также должны быть установлены из к�
 - ARP/MAC-обнаружение обычных клиентов ограничено L2-видимостью хоста или
   LAN-агента. Оно не заменяет DHCP/controller API и не гарантирует обнаружение
   телефонов и Wi-Fi клиентов в маршрутизируемых VLAN.
-- SNMP traps, Telegram-бот, кластер/HA и горизонтальное масштабирование пока не
-  реализованы. Планируйте одну active-инстанцию планировщика.
+- SNMP traps, полноценный Telegram/Max-бот с командами, кластер/HA и
+  горизонтальное масштабирование пока не реализованы. Планируйте одну
+  active-инстанцию планировщика. Опциональная односторонняя отправка Telegram
+  при смене статуса устройства уже есть.
 - Широкий опрос большого числа устройств ещё не прошёл нагрузочную проверку.
   Расширяйте охват партиями и контролируйте management plane оборудования.
 - JWT хранится фронтендом в браузере. Используйте только HTTPS, не работайте с

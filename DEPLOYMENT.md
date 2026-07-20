@@ -17,19 +17,11 @@ ACL, HTTPS, чистое создание секретов и БД, пилот S
 
 ## Получение проекта
 
-Разворачивайте зафиксированный tag или commit, а не изменяющуюся ветку:
-
-```bash
-export REPOSITORY_URL='git@github.com:Porcupine15/SNMP_Monitor.git'
-export RELEASE='REPLACE_WITH_APPROVED_TAG_OR_SHA'
-sudo git clone "$REPOSITORY_URL" /opt/snmp-monitor
-cd /opt/snmp-monitor
-sudo git checkout --detach "$RELEASE"
-sudo chown -R root:root /opt/snmp-monitor
-```
-
-Для закрытого репозитория используйте отдельный read-only deploy key, а не
-пароль от основной учётной записи.
+Актуальные варианты доставки зафиксированного релиза через Git или
+проверенный ZIP описаны в [README.md](README.md#1-получить-зафиксированный-релиз). В обоих
+случаях релиз сначала проверяется в staging, а production-копия устанавливается
+в `/opt/snmp-monitor` как `root:root` без `.git`. Не клонируйте рабочее Git-дерево
+непосредственно в `/opt`.
 
 ## Переменные окружения
 
@@ -37,6 +29,7 @@ sudo chown -R root:root /opt/snmp-monitor
 корпоративную среду переносить нельзя.
 
 ```bash
+cd /opt/snmp-monitor
 sudo install -o root -g root -m 600 .env.example .env
 sudoedit .env
 ```
@@ -67,6 +60,7 @@ Production-интерфейс публикуется только по HTTPS ч�
 reverse proxy:
 
 ```bash
+cd /opt/snmp-monitor
 export ADMIN_USERNAME='snmp-admin'
 export ADMIN_EMAIL='snmp-admin@corp.example'
 export FQDN='snmp-monitor.corp.example'
@@ -90,27 +84,11 @@ loopback VM, а PostgreSQL наружу не публикуется.
 
 ## Обновление
 
-Сначала сделайте и проверьте резервную копию, затем загрузите зафиксированный
-релиз, остановите Web-компоненты и явно примените миграцию:
-
-```bash
-cd /opt/snmp-monitor
-export NEW_RELEASE='REPLACE_WITH_NEW_TAG_OR_SHA'
-sudo ./scripts/backup.sh
-sudo git fetch --tags --prune
-sudo git checkout --detach "$NEW_RELEASE"
-sudo docker compose -f compose.production.yml -f compose.tls.yml build backend
-sudo docker compose -f compose.production.yml -f compose.tls.yml stop proxy backend
-sudo docker compose -f compose.production.yml -f compose.tls.yml \
-  run --rm backend alembic -c alembic.ini upgrade head
-sudo docker compose -f compose.production.yml -f compose.tls.yml \
-  up -d backend proxy
-sudo docker compose -f compose.production.yml -f compose.tls.yml ps
-```
-
-При откате после изменения схемы верните не только предыдущий код/image, но и
-предобновленческий дамп. Точная последовательность описана в
-[CORPORATE_DEPLOYMENT.md](CORPORATE_DEPLOYMENT.md#12-откат).
+Единая актуальная процедура для Git- и ZIP-релизов приведена в
+[README.md](README.md#обновление-production). Она сохраняет дамп, тегирует точный
+предыдущий backend image, собирает новый image до остановки и описывает
+возврат кода, image и БД. Не используйте `git fetch`/`git checkout` в
+`/opt/snmp-monitor`: production-каталог не содержит `.git`.
 
 ## Важные данные
 
